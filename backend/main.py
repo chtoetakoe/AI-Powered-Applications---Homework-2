@@ -8,7 +8,7 @@ import math
 import json
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -105,7 +105,7 @@ async def chat(req: ChatRequest):
             "content": str(result)
         })
 
-        # Add clarity-focused system prompt
+        
         req.messages.insert(0, {
             "role": "system",
             "content": "Only return clear, concise answers. Do not show formulas unless the user asks for detailed calculations."
