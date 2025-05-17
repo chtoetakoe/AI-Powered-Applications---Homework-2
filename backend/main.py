@@ -1,16 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional, Literal
-import openai
+from openai import OpenAI
+from dotenv import load_dotenv
 import os
 import math
 import json
-from dotenv import load_dotenv
-
 
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = FastAPI()
 
@@ -23,37 +23,45 @@ app.add_middleware(
 )
 
 class Message(BaseModel):
-    role: Literal["user", "assistant", "system", "function"]
+    role: Literal["user", "assistant", "system", "tool"]
     content: Optional[str] = None
     name: Optional[str] = None
+    tool_call_id: Optional[str] = None
 
 class ChatRequest(BaseModel):
     messages: list[Message]
 
+# Tool definitions
 functions = [
     {
-        "name": "calculate_mortgage",
-        "description": "Calculate monthly mortgage payments",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "principal": {"type": "number"},
-                "rate": {"type": "number"},
-                "years": {"type": "integer"},
+        "type": "function",
+        "function": {
+            "name": "calculate_mortgage",
+            "description": "Calculate monthly mortgage payments",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "principal": {"type": "number"},
+                    "rate": {"type": "number"},
+                    "years": {"type": "integer"},
+                },
+                "required": ["principal", "rate", "years"]
             },
-            "required": ["principal", "rate", "years"]
         },
     },
     {
-        "name": "search_product_database",
-        "description": "Search a product catalog by keyword",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "max_results": {"type": "integer", "default": 3},
+        "type": "function",
+        "function": {
+            "name": "search_product_database",
+            "description": "Search a product catalog by keyword",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 3},
+                },
+                "required": ["query"]
             },
-            "required": ["query"]
         },
     },
 ]
@@ -85,37 +93,42 @@ function_map = {
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    response = openai.ChatCompletion.create(
+    completion = client.chat.completions.create(
         model="gpt-4o-mini-2024-07-18",
-        messages=[m.dict() for m in req.messages],
-        functions=functions,
-        function_call="auto"
+        messages=[m.dict(exclude_none=True) for m in req.messages],
+        tools=functions,
+        tool_choice="auto"
     )
 
-    message = response.choices[0].message
+    message = completion.choices[0].message
 
-    if message.get("function_call"):
-        name = message.function_call.name
-        arguments = json.loads(message.function_call.arguments)
+    if message.tool_calls:
+        tool_call = message.tool_calls[0]
+        name = tool_call.function.name
+        arguments = json.loads(tool_call.function.arguments)
         result = function_map[name](**arguments)
 
-        req.messages.append({
-            "role": "function",
+        tool_response = {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
             "name": name,
             "content": str(result)
-        })
+        }
 
-        
-        req.messages.insert(0, {
-            "role": "system",
-            "content": "Only return clear, concise answers. Do not show formulas unless the user asks for detailed calculations."
-        })
+        updated_messages = req.messages + [message.dict(), tool_response]
 
-        follow_up = openai.ChatCompletion.create(
+        follow_up = client.chat.completions.create(
             model="gpt-4o-mini-2024-07-18",
-            messages=[m if isinstance(m, dict) else m.dict() for m in req.messages]
+            messages=updated_messages
         )
 
         return {"reply": follow_up.choices[0].message.content}
 
     return {"reply": message.content}
+
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <h1> Financial Assistant API</h1>
+    <p>Send a POST request to <code>/chat</code> to interact with the assistant.</p>
+    """
