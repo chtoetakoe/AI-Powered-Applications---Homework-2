@@ -55,6 +55,9 @@ cd backend
   ```
 
 - **Windows (CMD)**:
+- (Optional for Windows) Create Virtual Environment
+Windows users may skip this step and use their global Python installation,
+but using a virtual environment is still recommended for consistency.
   ```bash
   python -m venv .venv
   .venv\Scripts\activate
